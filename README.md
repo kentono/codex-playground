@@ -8,9 +8,9 @@ A small personal inventory app: name an item, upload a photo, and browse your co
 docker compose up -d --build
 ```
 
-Open http://localhost:8000. Compose stores the database and photos in the `itemkeeper-data` volume mounted at `/data`. Data survives container recreation and image upgrades. **`docker compose down -v` deletes that volume and all items.** The container runs as a non-root user and exposes a database-backed `/health` endpoint.
+Open http://localhost:8111. Compose stores the database and photos in the `itemkeeper-data` volume mounted at `/data`. Data survives container recreation and image upgrades. **`docker compose down -v` deletes that volume and all items.** The container runs as a non-root user and exposes a database-backed `/health` endpoint.
 
-This version is intended for personal use on a trusted local network. It has no authentication. Add access control before exposing it to the Internet. To restrict access to this computer, change the port mapping to `127.0.0.1:8000:8000`.
+This version is intended for personal use on a trusted local network. It has no authentication. Add access control before exposing it to the Internet. To restrict access to this computer, change the port mapping to `127.0.0.1:8111:8111`.
 
 ## Local development
 
@@ -19,7 +19,7 @@ Use Python 3.12:
 ```sh
 python -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt
-DATA_DIR="$PWD/.local-data" .venv/bin/uvicorn app.main:app --reload
+DATA_DIR="$PWD/.local-data" .venv/bin/uvicorn app.main:app --reload --port 8111
 ```
 
 Run tests with `.venv/bin/python -m pytest -q`. No credentials are required.
