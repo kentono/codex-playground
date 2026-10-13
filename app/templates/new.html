@@ -1,0 +1,8 @@
+{% extends "base.html" %}{% block title %}Add item{% endblock %}
+{% block content %}<a class="back" href="/">← Back to my items</a><div class="form-heading"><p class="eyebrow">GROW YOUR COLLECTION</p><h1>Add an item</h1><p class="subtitle">Give it a name. Capture the details.</p></div>
+<form action="/items" method="post" enctype="multipart/form-data" class="item-form">
+{% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+<label for="name">Item name</label><input id="name" name="name" value="{{ name }}" placeholder="e.g. My favorite camera" maxlength="120" required><p class="hint">Something you’ll recognize at a glance.</p>
+<label for="image">Photo</label><div class="upload"><img id="preview" alt="Selected image preview" hidden><div id="upload-prompt"><span class="upload-icon">↥</span><strong>Choose a photo of your item</strong><span>JPEG, PNG, or WebP · Up to 10 MB</span></div><input type="file" id="image" name="image" accept="image/jpeg,image/png,image/webp" required></div><p class="hint">Photos are resized for storage. Location metadata is removed.</p>
+<div class="form-actions"><a class="cancel" href="/">Cancel</a><button class="button" type="submit">Save item →</button></div>
+</form><script src="/static/upload.js" defer></script>{% endblock %}

@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow">YOUR PERSONAL INVENTORY</p><h1>My items<span class="count">{{ items|length }}</span></h1><p class="subtitle">Keep the things you own in view.</p></div><a class="button" href="/items/new">＋ Add item</a></div>
+{% if items %}<section class="grid" aria-label="Items">{% for item in items %}<article class="card"><div class="image-wrap"><img src="/uploads/{{ item.image_path }}" alt="{{ item.name }}" loading="lazy"></div><div class="card-info"><h2>{{ item.name }}</h2><p>Added {{ item.created_at[:10] }}</p></div></article>{% endfor %}</section>
+{% else %}<section class="empty"><div class="empty-icon">◈</div><h2>Make room for your first item.</h2><p>A name and a photo are all you need.<br>Start your collection with something you love.</p><a class="button" href="/items/new">＋ Add your first item</a></section>{% endif %}
+{% endblock %}

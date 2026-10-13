@@ -1,0 +1,10 @@
+services:
+  itemkeeper:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - itemkeeper-data:/data
+    restart: unless-stopped
+volumes:
+  itemkeeper-data:
