@@ -10,7 +10,7 @@ from decimal import Decimal
 from io import BytesIO, StringIO
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -127,14 +127,41 @@ def new_item(request: Request):
     return render_form(request)
 
 
-def render_form(request, error=None, name="", status_code=200, fields=None):
+def get_item(item_id):
+    with connect() as db:
+        item = db.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+    if item is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return item
+
+
+@app.get("/items/{item_id}/edit")
+def edit_item(request: Request, item_id: str):
+    item = get_item(item_id)
+    cents = item["price_cents"]
+    fields = {"item_date": item["item_date"] or "", "description": item["description"] or "",
+              "price": f"{cents // 100}.{cents % 100:02d}" if cents is not None else ""}
+    return render_form(request, name=item["name"], fields=fields, item=item)
+
+
+def render_form(request, error=None, name="", status_code=200, fields=None, item=None):
     context = {"error": error, "name": name, "item_date": "", "price": "", "description": ""}
     context.update(fields or {})
+    context["item"] = item
     return templates.TemplateResponse(request=request, name="new.html", context=context, status_code=status_code)
 
 
 @app.post("/items")
 async def create_item(request: Request):
+    return await save_item(request)
+
+
+@app.post("/items/{item_id}/edit")
+async def update_item(request: Request, item_id: str):
+    return await save_item(request, get_item(item_id))
+
+
+async def save_item(request: Request, item=None):
     async with request.form(max_files=1, max_fields=4) as form:
         raw_name = form.get("name", "")
         name = raw_name.strip() if isinstance(raw_name, str) else ""
@@ -142,7 +169,7 @@ async def create_item(request: Request):
                   for key in ("item_date", "price", "description")}
 
         def invalid(message):
-            return render_form(request, message, name, 400, fields)
+            return render_form(request, message, name, 400, fields, item)
 
         item_date = fields["item_date"] or None
         if item_date:
@@ -162,33 +189,52 @@ async def create_item(request: Request):
         upload = form.get("image")
         if not name or len(name) > 120:
             return invalid("Enter a name between 1 and 120 characters.")
-        if not isinstance(upload, UploadFile):
+        picture = None
+        has_upload = isinstance(upload, UploadFile) and bool(upload.filename)
+        if not has_upload and item is None:
             return invalid("Choose an image to add your item.")
-        content = await upload.read(MAX_IMAGE_BYTES + 1)
-        if len(content) > MAX_IMAGE_BYTES:
-            return invalid("Choose an image under 10 MB.")
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("error", Image.DecompressionBombWarning)
-                with Image.open(BytesIO(content)) as source:
-                    if source.format not in {"JPEG", "PNG", "WEBP"}:
-                        raise ValueError("Unsupported format")
-                    source.load()
-                    picture = ImageOps.exif_transpose(source).convert("RGB")
-                    picture.thumbnail((1200, 1200))
-        except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError, Image.DecompressionBombWarning):
-            return invalid("Choose a valid JPEG, PNG, or WebP image (up to 20 million pixels).")
-    item_id = uuid.uuid4().hex
-    filename = f"{item_id}.jpg"
-    path = DATA_DIR / "uploads" / filename
+        if has_upload:
+            content = await upload.read(MAX_IMAGE_BYTES + 1)
+            if len(content) > MAX_IMAGE_BYTES:
+                return invalid("Choose an image under 10 MB.")
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("error", Image.DecompressionBombWarning)
+                    with Image.open(BytesIO(content)) as source:
+                        if source.format not in {"JPEG", "PNG", "WEBP"}:
+                            raise ValueError("Unsupported format")
+                        source.load()
+                        picture = ImageOps.exif_transpose(source).convert("RGB")
+                        picture.thumbnail((1200, 1200))
+            except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError, Image.DecompressionBombWarning):
+                return invalid("Choose a valid JPEG, PNG, or WebP image (up to 20 million pixels).")
+    item_id = item["id"] if item is not None else uuid.uuid4().hex
+    filename = f"{uuid.uuid4().hex}.jpg" if picture is not None else None
+    path = DATA_DIR / "uploads" / filename if filename else None
+    old_filename = None
     try:
-        picture.save(path, "JPEG", quality=85)
+        if picture is not None:
+            picture.save(path, "JPEG", quality=85)
         with connect() as db:
-            db.execute(
-                "INSERT INTO items (id, name, image_path, created_at, item_date, price_cents, description) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (item_id, name, filename, datetime.now(timezone.utc).isoformat(), item_date, price_cents, fields["description"] or None),
-            )
+            if item is None:
+                db.execute(
+                    "INSERT INTO items (id, name, image_path, created_at, item_date, price_cents, description) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (item_id, name, filename, datetime.now(timezone.utc).isoformat(), item_date, price_cents, fields["description"] or None),
+                )
+            else:
+                db.execute("BEGIN IMMEDIATE")
+                current = db.execute("SELECT image_path FROM items WHERE id = ?", (item_id,)).fetchone()
+                if current is None:
+                    raise HTTPException(status_code=404, detail="Item not found")
+                old_filename = current["image_path"] if filename else None
+                db.execute(
+                    "UPDATE items SET name = ?, item_date = ?, price_cents = ?, description = ?, image_path = ? WHERE id = ?",
+                    (name, item_date, price_cents, fields["description"] or None, filename or current["image_path"], item_id),
+                )
     except Exception:
-        path.unlink(missing_ok=True)
+        if path is not None:
+            path.unlink(missing_ok=True)
         raise
+    if old_filename:
+        (DATA_DIR / "uploads" / old_filename).unlink(missing_ok=True)
     return RedirectResponse("/", status_code=303)

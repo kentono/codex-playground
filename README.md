@@ -30,7 +30,7 @@ Names must contain 1–120 characters. Photos must be JPEG, PNG, or WebP, at mos
 
 For a consistent backup, stop the app and copy the entire `/data` volume (including any SQLite WAL files and `uploads/`), then restart it. Restore into a stopped container's volume and ensure UID 10001 can read and write it. Keep database and image backups together.
 
-Editing, deletion, search, and accounts are future features.
+Deletion, search, and accounts are future features.
 
 ### Builds behind an HTTPS proxy
 
@@ -50,3 +50,7 @@ Items can optionally include a date (using the browser date picker), a price, an
 ## Export CSV
 
 Click **Export CSV** on the item list to download every item, including its ID, name, image filename, creation timestamp, date, price in cents, and description. A separate `price` column provides the two-decimal display value. The UTF-8 CSV preserves commas, quotes, multiline descriptions, and Unicode; blank optional values export as empty cells. An empty collection exports column headers. Photos themselves are separate files and are not embedded in the CSV; use the full data backup to preserve photos. When importing into a spreadsheet, treat text columns as text to preserve their literal contents.
+
+## Edit an item
+
+Click any item card to open its prefilled edit form. Update its name, date, price, or description and choose **Save changes**. Optional fields can be cleared. Leave the photo selection empty to retain the current image, or upload a replacement. Replacing a photo removes the old image after the database update succeeds. The item ID and original creation timestamp remain unchanged, and CSV exports include saved edits. Cancel returns to the collection without saving.

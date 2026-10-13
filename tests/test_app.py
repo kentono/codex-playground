@@ -156,3 +156,92 @@ def test_export_all_database_fields_losslessly(client):
     assert [row['price'] for row in exported] == ['123.45', '', '0.00']
     with main.connect() as db:
         assert db.execute('SELECT count(*) FROM items').fetchone()[0] == 3
+
+
+def create_editable_item(client):
+    response = client.post('/items', data={'name': 'Camera', 'item_date': '2026-10-13', 'price': '123.45', 'description': 'Original notes'}, files={'image': ('photo.png', photo(), 'image/png')})
+    assert response.status_code == 200
+    with main.connect() as db:
+        return dict(db.execute('SELECT * FROM items').fetchone())
+
+
+def test_edit_prefilled_data_and_keep_image(client):
+    item = create_editable_item(client)
+    url = f'/items/{item["id"]}/edit'
+    assert url in client.get('/').text
+    page = client.get(url).text
+    for text in ('value="Camera"', 'value="2026-10-13"', 'value="123.45"', 'Original notes', item['image_path']):
+        assert text in page
+    original_photo = (main.DATA_DIR / 'uploads' / item['image_path']).read_bytes()
+    response = client.post(url, data={'name': 'Updated camera', 'item_date': '2025-02-28', 'price': '0.10', 'description': 'Updated <notes>\nTwo lines'})
+    assert response.status_code == 200
+    assert 'Updated &lt;notes&gt;' in response.text
+    with main.connect() as db:
+        updated = db.execute('SELECT * FROM items').fetchone()
+        assert updated['id'] == item['id']
+        assert updated['created_at'] == item['created_at']
+        assert updated['image_path'] == item['image_path']
+        assert updated['item_date'] == '2025-02-28'
+        assert updated['price_cents'] == 10
+        assert updated['description'] == 'Updated <notes>\nTwo lines'
+        assert db.execute('SELECT count(*) FROM items').fetchone()[0] == 1
+    assert (main.DATA_DIR / 'uploads' / item['image_path']).read_bytes() == original_photo
+    assert 'Updated camera' in client.get('/items/export.csv').text
+    with TestClient(main.app) as restarted:
+        assert 'Updated camera' in restarted.get('/').text
+    assert client.post(url, data={'name': 'Updated camera', 'item_date': '', 'price': '', 'description': ''}).status_code == 200
+    with main.connect() as db:
+        cleared = db.execute('SELECT * FROM items').fetchone()
+        assert cleared['item_date'] is None and cleared['price_cents'] is None and cleared['description'] is None
+
+
+def test_edit_replaces_photo(client):
+    item = create_editable_item(client)
+    replacement = BytesIO()
+    Image.new('RGB', (20, 10), 'red').save(replacement, 'PNG')
+    assert client.post(f'/items/{item["id"]}/edit', data={'name': 'Camera'}, files={'image': ('replacement.png', replacement.getvalue(), 'image/png')}).status_code == 200
+    with main.connect() as db:
+        updated = db.execute('SELECT * FROM items').fetchone()
+    assert updated['image_path'] != item['image_path']
+    assert not (main.DATA_DIR / 'uploads' / item['image_path']).exists()
+    response = client.get(f'/uploads/{updated["image_path"]}')
+    assert response.status_code == 200
+    with Image.open(BytesIO(response.content)) as saved:
+        assert saved.size == (20, 10)
+    assert len(list((main.DATA_DIR / 'uploads').iterdir())) == 1
+
+
+@pytest.mark.parametrize('bad_data,bad_photo', [({'name': ' '}, False), ({'name': 'Camera', 'price': '-1'}, False), ({'name': 'Camera'}, True)])
+def test_invalid_edit_preserves_original(client, bad_data, bad_photo):
+    item = create_editable_item(client)
+    kwargs = {'files': {'image': ('bad.png', b'not an image', 'image/png')}} if bad_photo else {}
+    response = client.post(f'/items/{item["id"]}/edit', data=bad_data, **kwargs)
+    assert response.status_code == 400
+    assert f'action="/items/{item["id"]}/edit"' in response.text
+    assert item['image_path'] in response.text
+    with main.connect() as db:
+        assert dict(db.execute('SELECT * FROM items').fetchone()) == item
+    assert len(list((main.DATA_DIR / 'uploads').iterdir())) == 1
+
+
+def test_edit_missing_item(client):
+    assert client.get('/items/missing/edit').status_code == 404
+    assert client.post('/items/missing/edit', data={'name': 'Missing'}).status_code == 404
+
+
+def test_failed_edit_removes_only_new_photo(client, monkeypatch):
+    item = create_editable_item(client)
+    real_connect = main.connect
+    calls = 0
+    def failing_update():
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            raise sqlite3.OperationalError('unavailable')
+        return real_connect()
+    monkeypatch.setattr(main, 'connect', failing_update)
+    with pytest.raises(sqlite3.OperationalError):
+        client.post(f'/items/{item["id"]}/edit', data={'name': 'New name'}, files={'image': ('new.png', photo(), 'image/png')})
+    assert [path.name for path in (main.DATA_DIR / 'uploads').iterdir()] == [item['image_path']]
+    with real_connect() as db:
+        assert dict(db.execute('SELECT * FROM items').fetchone()) == item
