@@ -46,3 +46,7 @@ Normal Docker builds do not require this option. TLS verification remains enable
 ## Item details
 
 Items can optionally include a date (using the browser date picker), a price, and a description. Prices are non-negative with up to two decimal places and are stored as integer cents for exact values; no currency is assumed. Descriptions support up to 5,000 characters. All details appear on the item cards. The database automatically adds these fields on startup while preserving existing items and photos; existing items have blank values for these fields.
+
+## Export CSV
+
+Click **Export CSV** on the item list to download every item, including its ID, name, image filename, creation timestamp, date, price in cents, and description. A separate `price` column provides the two-decimal display value. The UTF-8 CSV preserves commas, quotes, multiline descriptions, and Unicode; blank optional values export as empty cells. An empty collection exports column headers. Photos themselves are separate files and are not embedded in the CSV; use the full data backup to preserve photos. When importing into a spreadsheet, treat text columns as text to preserve their literal contents.

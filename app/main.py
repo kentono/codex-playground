@@ -1,3 +1,4 @@
+import csv
 import os
 import re
 import sqlite3
@@ -6,11 +7,11 @@ import warnings
 from contextlib import asynccontextmanager, contextmanager
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from io import BytesIO
+from io import BytesIO, StringIO
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -99,6 +100,26 @@ def items(request: Request):
     with connect() as db:
         rows = db.execute("SELECT * FROM items ORDER BY created_at DESC, id DESC").fetchall()
     return templates.TemplateResponse(request=request, name="items.html", context={"items": rows})
+
+
+@app.get("/items/export.csv")
+def export_items():
+    with connect() as db:
+        rows = db.execute("SELECT * FROM items ORDER BY created_at DESC, id DESC").fetchall()
+    output = StringIO(newline="")
+    columns = ["id", "name", "image_path", "created_at", "item_date", "price_cents", "description"]
+    writer = csv.DictWriter(output, fieldnames=columns + ["price"], quoting=csv.QUOTE_ALL)
+    writer.writeheader()
+    for row in rows:
+        record = dict(row)
+        cents = record["price_cents"]
+        record["price"] = f"{cents // 100}.{cents % 100:02d}" if cents is not None else ""
+        writer.writerow(record)
+    return Response(
+        content=output.getvalue().encode("utf-8-sig"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="itemkeeper-items.csv"', "Cache-Control": "no-store"},
+    )
 
 
 @app.get("/items/new")

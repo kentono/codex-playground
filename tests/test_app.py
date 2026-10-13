@@ -121,3 +121,38 @@ def test_migration_preserves_existing_items_and_is_repeatable(client):
             assert item["price_cents"] is None
             assert item["description"] is None
         assert image_path.read_bytes() == photo()
+
+
+def test_export_empty_collection(client):
+    import csv
+    from io import StringIO
+    response = client.get('/items/export.csv')
+    assert response.status_code == 200
+    assert response.headers['content-type'].startswith('text/csv')
+    assert response.headers['content-disposition'] == 'attachment; filename="itemkeeper-items.csv"'
+    reader = csv.DictReader(StringIO(response.content.decode('utf-8-sig'), newline=''))
+    assert reader.fieldnames == ['id', 'name', 'image_path', 'created_at', 'item_date', 'price_cents', 'description', 'price']
+    assert list(reader) == []
+    assert '/items/export.csv' in client.get('/').text
+
+
+def test_export_all_database_fields_losslessly(client):
+    import csv
+    from io import StringIO
+    records = [
+        ('one', 'Camera, "旅行"', 'one.jpg', '2026-10-13T00:00:00+00:00', '2026-10-12', 12345, 'First line\r\nSecond, "quoted" line ☕'),
+        ('two', '=literal text', 'two.jpg', '2026-10-12T00:00:00+00:00', None, None, None),
+        ('three', 'Free', 'three.jpg', '2026-10-11T00:00:00+00:00', None, 0, 'Free item'),
+    ]
+    with main.connect() as db:
+        db.executemany('INSERT INTO items (id, name, image_path, created_at, item_date, price_cents, description) VALUES (?, ?, ?, ?, ?, ?, ?)', records)
+        expected = [dict(row) for row in db.execute('SELECT * FROM items ORDER BY created_at DESC, id DESC')]
+    response = client.get('/items/export.csv')
+    exported = list(csv.DictReader(StringIO(response.content.decode('utf-8-sig'), newline='')))
+    assert len(exported) == 3
+    for original, saved in zip(expected, exported):
+        for field, value in original.items():
+            assert saved[field] == (str(value) if value is not None else '')
+    assert [row['price'] for row in exported] == ['123.45', '', '0.00']
+    with main.connect() as db:
+        assert db.execute('SELECT count(*) FROM items').fetchone()[0] == 3
