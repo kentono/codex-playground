@@ -3,6 +3,8 @@
 <form action="/items" method="post" enctype="multipart/form-data" class="item-form">
 {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
 <label for="name">Item name</label><input id="name" name="name" value="{{ name }}" placeholder="e.g. My favorite camera" maxlength="120" required><p class="hint">Something you’ll recognize at a glance.</p>
+<div class="field-row"><div><label for="item_date">Date <span class="optional">(optional)</span></label><input type="date" id="item_date" name="item_date" value="{{ item_date }}"></div><div><label for="price">Price <span class="optional">(optional)</span></label><input type="number" id="price" name="price" value="{{ price }}" min="0" max="999999999.99" step="0.01" placeholder="0.00"></div></div>
+<label for="description">Description <span class="optional">(optional)</span></label><textarea id="description" name="description" maxlength="5000" rows="4" placeholder="Details you’d like to remember">{{ description }}</textarea><p class="hint">Up to 5,000 characters.</p>
 <label for="image">Photo</label><div class="upload"><img id="preview" alt="Selected image preview" hidden><div id="upload-prompt"><span class="upload-icon">↥</span><strong>Choose a photo of your item</strong><span>JPEG, PNG, or WebP · Up to 10 MB</span></div><input type="file" id="image" name="image" accept="image/jpeg,image/png,image/webp" required></div><p class="hint">Photos are resized for storage. Location metadata is removed.</p>
 <div class="form-actions"><a class="cancel" href="/">Cancel</a><button class="button" type="submit">Save item →</button></div>
 </form><script src="/static/upload.js" defer></script>{% endblock %}

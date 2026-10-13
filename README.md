@@ -42,3 +42,7 @@ docker compose up -d --no-build
 ```
 
 Normal Docker builds do not require this option. TLS verification remains enabled.
+
+## Item details
+
+Items can optionally include a date (using the browser date picker), a price, and a description. Prices are non-negative with up to two decimal places and are stored as integer cents for exact values; no currency is assumed. Descriptions support up to 5,000 characters. All details appear on the item cards. The database automatically adds these fields on startup while preserving existing items and photos; existing items have blank values for these fields.

@@ -1,9 +1,11 @@
 import os
+import re
 import sqlite3
 import uuid
 import warnings
 from contextlib import asynccontextmanager, contextmanager
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 
@@ -38,6 +40,10 @@ async def lifespan(app):
     with connect() as db:
         db.execute("PRAGMA journal_mode=WAL")
         db.execute("CREATE TABLE IF NOT EXISTS items (id TEXT PRIMARY KEY, name TEXT NOT NULL, image_path TEXT NOT NULL, created_at TEXT NOT NULL)")
+        columns = {row["name"] for row in db.execute("PRAGMA table_info(items)")}
+        for column, kind in (("item_date", "TEXT"), ("price_cents", "INTEGER"), ("description", "TEXT")):
+            if column not in columns:
+                db.execute(f"ALTER TABLE items ADD COLUMN {column} {kind}")
     yield
 
 
@@ -100,23 +106,46 @@ def new_item(request: Request):
     return render_form(request)
 
 
-def render_form(request, error=None, name="", status_code=200):
-    return templates.TemplateResponse(request=request, name="new.html", context={"error": error, "name": name}, status_code=status_code)
+def render_form(request, error=None, name="", status_code=200, fields=None):
+    context = {"error": error, "name": name, "item_date": "", "price": "", "description": ""}
+    context.update(fields or {})
+    return templates.TemplateResponse(request=request, name="new.html", context=context, status_code=status_code)
 
 
 @app.post("/items")
 async def create_item(request: Request):
-    async with request.form(max_files=1, max_fields=2) as form:
+    async with request.form(max_files=1, max_fields=4) as form:
         raw_name = form.get("name", "")
         name = raw_name.strip() if isinstance(raw_name, str) else ""
+        fields = {key: form.get(key, "").strip() if isinstance(form.get(key, ""), str) else ""
+                  for key in ("item_date", "price", "description")}
+
+        def invalid(message):
+            return render_form(request, message, name, 400, fields)
+
+        item_date = fields["item_date"] or None
+        if item_date:
+            try:
+                if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", item_date):
+                    raise ValueError
+                date.fromisoformat(item_date)
+            except ValueError:
+                return invalid("Choose a valid date.")
+        price_cents = None
+        if fields["price"]:
+            if not re.fullmatch(r"[0-9]{1,9}(?:\.[0-9]{1,2})?", fields["price"]):
+                return invalid("Enter a non-negative price with up to two decimal places (maximum 999999999.99).")
+            price_cents = int(Decimal(fields["price"]) * 100)
+        if len(fields["description"]) > 5000:
+            return invalid("Keep the description to 5,000 characters or fewer.")
         upload = form.get("image")
         if not name or len(name) > 120:
-            return render_form(request, "Enter a name between 1 and 120 characters.", name, 400)
+            return invalid("Enter a name between 1 and 120 characters.")
         if not isinstance(upload, UploadFile):
-            return render_form(request, "Choose an image to add your item.", name, 400)
+            return invalid("Choose an image to add your item.")
         content = await upload.read(MAX_IMAGE_BYTES + 1)
         if len(content) > MAX_IMAGE_BYTES:
-            return render_form(request, "Choose an image under 10 MB.", name, 400)
+            return invalid("Choose an image under 10 MB.")
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("error", Image.DecompressionBombWarning)
@@ -127,14 +156,17 @@ async def create_item(request: Request):
                     picture = ImageOps.exif_transpose(source).convert("RGB")
                     picture.thumbnail((1200, 1200))
         except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError, Image.DecompressionBombWarning):
-            return render_form(request, "Choose a valid JPEG, PNG, or WebP image (up to 20 million pixels).", name, 400)
+            return invalid("Choose a valid JPEG, PNG, or WebP image (up to 20 million pixels).")
     item_id = uuid.uuid4().hex
     filename = f"{item_id}.jpg"
     path = DATA_DIR / "uploads" / filename
     try:
         picture.save(path, "JPEG", quality=85)
         with connect() as db:
-            db.execute("INSERT INTO items VALUES (?, ?, ?, ?)", (item_id, name, filename, datetime.now(timezone.utc).isoformat()))
+            db.execute(
+                "INSERT INTO items (id, name, image_path, created_at, item_date, price_cents, description) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (item_id, name, filename, datetime.now(timezone.utc).isoformat(), item_date, price_cents, fields["description"] or None),
+            )
     except Exception:
         path.unlink(missing_ok=True)
         raise

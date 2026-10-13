@@ -66,3 +66,58 @@ def test_database_failure_removes_photo(client, monkeypatch):
     with pytest.raises(sqlite3.OperationalError):
         client.post("/items", data={"name": "Item"}, files={"image": ("photo.png", photo(), "image/png")})
     assert list((main.DATA_DIR / "uploads").iterdir()) == []
+
+
+def test_item_details_persist_and_display(client):
+    details = {"name": "Camera", "item_date": "2026-10-13", "price": "123.45", "description": "First line\n<script>Details</script>"}
+    response = client.post("/items", data=details, files={"image": ("photo.png", photo(), "image/png")})
+    assert response.status_code == 200
+    assert "2026-10-13" in response.text
+    assert "123.45" in response.text
+    assert "&lt;script&gt;Details&lt;/script&gt;" in response.text
+    with main.connect() as db:
+        item = db.execute("SELECT * FROM items").fetchone()
+        assert item["price_cents"] == 12345
+        assert item["item_date"] == details["item_date"]
+        assert item["description"] == details["description"]
+    with TestClient(main.app) as restarted:
+        assert "123.45" in restarted.get("/").text
+    response = client.post("/items", data={"name": "Free item", "price": "0"}, files={"image": ("photo.png", photo(), "image/png")})
+    assert "0.00" in response.text
+
+
+@pytest.mark.parametrize("field,value", [
+    ("item_date", "2026-02-30"), ("item_date", "20261013"),
+    ("price", "-1"), ("price", "12.345"), ("price", "NaN"),
+    ("price", "1000000000"), ("description", "x" * 5001),
+])
+def test_invalid_details_do_not_create_items(client, field, value):
+    data = {"name": "Camera", "item_date": "2026-10-13", "price": "123.45", "description": "Keep this text"}
+    data[field] = value
+    response = client.post("/items", data=data, files={"image": ("photo.png", photo(), "image/png")})
+    assert response.status_code == 400
+    assert 'value="Camera"' in response.text
+    if field != "description":
+        assert "Keep this text" in response.text
+    with main.connect() as db:
+        assert db.execute("SELECT count(*) FROM items").fetchone()[0] == 0
+    assert list((main.DATA_DIR / "uploads").iterdir()) == []
+
+
+def test_migration_preserves_existing_items_and_is_repeatable(client):
+    image_path = main.DATA_DIR / "uploads" / "legacy.jpg"
+    image_path.write_bytes(photo())
+    with main.connect() as db:
+        db.execute("DROP TABLE items")
+        db.execute("CREATE TABLE items (id TEXT PRIMARY KEY, name TEXT NOT NULL, image_path TEXT NOT NULL, created_at TEXT NOT NULL)")
+        db.execute("INSERT INTO items VALUES (?, ?, ?, ?)", ("legacy", "Old camera", "legacy.jpg", "2026-01-01T00:00:00+00:00"))
+    for _ in range(2):
+        with TestClient(main.app) as restarted:
+            assert "Old camera" in restarted.get("/").text
+        with main.connect() as db:
+            item = db.execute("SELECT * FROM items WHERE id = 'legacy'").fetchone()
+            assert item["image_path"] == "legacy.jpg"
+            assert item["item_date"] is None
+            assert item["price_cents"] is None
+            assert item["description"] is None
+        assert image_path.read_bytes() == photo()
